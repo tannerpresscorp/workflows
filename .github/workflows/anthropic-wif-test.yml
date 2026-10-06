@@ -1,12 +1,26 @@
 name: anthropic-wif-test
-on: push
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
 permissions:
   id-token: write
   contents: read
+
 jobs:
   call-claude:
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Anthropic SDK
+        run: python -m pip install --upgrade anthropic
+
       - name: Fetch GitHub OIDC token
         uses: actions/github-script@v8
         with:
@@ -14,17 +28,35 @@ jobs:
             const token = await core.getIDToken('https://api.anthropic.com');
             core.setSecret(token);
             core.exportVariable('JWT', token);
-      - name: Exchange for an Anthropic access token
+
+      - name: Call Claude using workload identity
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: fdrl_01Up5HFEYyZkdMfRfkJjb3hY
+          ANTHROPIC_ORGANIZATION_ID: 9e12e8f1-2011-4b25-8396-d28225b636ae
+          ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01AVwWtu9VR43jNCBLWiRLVm
+          ANTHROPIC_WORKSPACE_ID: wrkspc_01JAYYx1FrDdQ9Y7kVsgh9eU
         run: |
-          curl -sS https://api.anthropic.com/v1/oauth/token \
-            -H "content-type: application/json" \
-            --data @- <<JSON | jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)'
-          {
-            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "assertion": "$JWT",
-            "federation_rule_id": "fdrl_015rLkEckz2GWamBwjfevqeE",
-            "organization_id": "9e12e8f1-2011-4b25-8396-d28225b636ae",
-            "service_account_id": "svac_01AVwWtu9VR43jNCBLWiRLVm",
-            "workspace_id": "wrkspc_01JAYYx1FrDdQ9Y7kVsgh9eU"
-          }
-          JSON
+          python - <<'PY'
+          import os
+          import anthropic
+          from anthropic import WorkloadIdentityCredentials
+
+          client = anthropic.Anthropic(
+              credentials=WorkloadIdentityCredentials(
+                  identity_token_provider=lambda: os.environ["JWT"],
+                  federation_rule_id=os.environ["ANTHROPIC_FEDERATION_RULE_ID"],
+                  organization_id=os.environ["ANTHROPIC_ORGANIZATION_ID"],
+                  service_account_id=os.environ["ANTHROPIC_SERVICE_ACCOUNT_ID"],
+                  workspace_id=os.environ["ANTHROPIC_WORKSPACE_ID"],
+              ),
+          )
+
+          message = client.messages.create(
+              model="claude-sonnet-4-6",
+              max_tokens=1024,
+              messages=[{"role": "user", "content": "Hello, Claude"}],
+          )
+          for block in message.content:
+              if block.type == "text":
+                  print(block.text)
+          PY
