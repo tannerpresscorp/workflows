@@ -1,4 +1,4 @@
-"""A repository-scoped AI worker for GitHub Actions, using only the standard library."""
+"""A repository-scoped AI worker for GitHub Actions with optional Anthropic support."""
 
 import argparse
 import json
@@ -232,17 +232,148 @@ class GitHubActions:
         }
 
 
-def run_agent(task, github, api_key, model, max_turns=10):
+class AnthropicProvider:
+    def __init__(self):
+        try:
+            import anthropic
+        except ImportError:
+            raise WorkerError(
+                "Install the optional SDK: python -m pip install -r requirements-anthropic.txt"
+            ) from None
+        self.sdk = anthropic
+        token_file = os.environ.get("ANTHROPIC_IDENTITY_TOKEN_FILE")
+        if token_file:
+            settings = {
+                "federation_rule_id": os.environ.get("ANTHROPIC_FEDERATION_RULE_ID"),
+                "organization_id": os.environ.get("ANTHROPIC_ORGANIZATION_ID"),
+            }
+            if not all(settings.values()):
+                raise WorkerError(
+                    "Workload identity requires ANTHROPIC_FEDERATION_RULE_ID "
+                    "and ANTHROPIC_ORGANIZATION_ID."
+                )
+            settings["service_account_id"] = os.environ.get("ANTHROPIC_SERVICE_ACCOUNT_ID") or None
+            settings["workspace_id"] = os.environ.get("ANTHROPIC_WORKSPACE_ID") or None
+
+            def read_token():
+                try:
+                    with open(token_file, encoding="utf-8") as source:
+                        token = source.read().strip()
+                except (OSError, UnicodeError):
+                    raise WorkerError("Cannot read the Anthropic identity token file.") from None
+                if not token:
+                    raise WorkerError("Anthropic identity token file is empty.")
+                return token
+
+            try:
+                auth = {"credentials": anthropic.WorkloadIdentityCredentials(
+                    identity_token_provider=read_token, **settings,
+                )}
+            except (anthropic.AnthropicError, OSError, ValueError):
+                raise WorkerError("Cannot initialize Anthropic workload identity.") from None
+        else:
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if not api_key:
+                raise WorkerError(
+                    "Set ANTHROPIC_API_KEY or ANTHROPIC_IDENTITY_TOKEN_FILE."
+                )
+            auth = {"api_key": api_key}
+        try:
+            self.client = anthropic.Anthropic(
+                **auth, base_url="https://api.anthropic.com", timeout=30, max_retries=0,
+            )
+        except (anthropic.AnthropicError, OSError, ValueError):
+            if "credentials" in auth:
+                auth["credentials"].close()
+            raise WorkerError("Cannot initialize the Anthropic client.") from None
+
+    def close(self):
+        self.client.close()
+
+    def __call__(self, messages, model):
+        converted = []
+        for message in messages[1:]:
+            role = message["role"]
+            blocks = []
+            if role == "tool":
+                role = "user"
+                blocks.append({
+                    "type": "tool_result", "tool_use_id": message["tool_call_id"],
+                    "content": message["content"],
+                })
+            else:
+                if message.get("content"):
+                    blocks.append({"type": "text", "text": message["content"]})
+                for call in message.get("tool_calls", []):
+                    blocks.append({
+                        "type": "tool_use", "id": call["id"],
+                        "name": call["function"]["name"],
+                        "input": json.loads(call["function"]["arguments"]),
+                    })
+            if converted and converted[-1]["role"] == role:
+                converted[-1]["content"].extend(blocks)
+            else:
+                converted.append({"role": role, "content": blocks})
+        tools = [
+            {
+                "name": entry["function"]["name"],
+                "description": entry["function"]["description"],
+                "input_schema": entry["function"]["parameters"],
+            }
+            for entry in TOOLS
+        ]
+        try:
+            response = self.client.messages.create(
+                model=model, max_tokens=1024, system=messages[0]["content"],
+                messages=converted, tools=tools,
+            )
+        except (self.sdk.AnthropicError, OSError, ValueError):
+            raise WorkerError(
+                "Anthropic request failed. Check authentication, model access, and rate limits."
+            ) from None
+        try:
+            result = response.model_dump()
+            if result["stop_reason"] not in {"end_turn", "tool_use"}:
+                raise ValueError
+            text, calls = [], []
+            for block in result["content"]:
+                if block["type"] == "text":
+                    if not isinstance(block["text"], str):
+                        raise ValueError
+                    text.append(block["text"])
+                elif block["type"] == "tool_use":
+                    calls.append({
+                        "id": block["id"], "type": "function",
+                        "function": {
+                            "name": block["name"],
+                            "arguments": json.dumps(block["input"]),
+                        },
+                    })
+                else:
+                    raise ValueError
+            if bool(calls) != (result["stop_reason"] == "tool_use"):
+                raise ValueError
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise WorkerError("Anthropic returned an invalid or incomplete response.") from None
+        return {"choices": [{"message": {
+            "role": "assistant", "content": "\n".join(text), "tool_calls": calls,
+        }}]}
+
+
+def run_agent(task, github, api_key, model, max_turns=10, completion=None):
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT + f" Repository: {github.repo}."},
         {"role": "user", "content": task},
     ]
     seen_ids = set()
     for _ in range(max_turns):
-        result = api_request(
-            "https://api.openai.com/v1/chat/completions", api_key, "POST",
-            {"model": model, "messages": messages, "tools": TOOLS},
-        )
+        if completion is None:
+            result = api_request(
+                "https://api.openai.com/v1/chat/completions", api_key, "POST",
+                {"model": model, "messages": messages, "tools": TOOLS},
+            )
+        else:
+            result = completion(messages, model)
         try:
             message = result["choices"][0]["message"]
             if not isinstance(message, dict) or message.get("role") != "assistant":
@@ -289,7 +420,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("task", help="Natural-language GitHub Actions request")
     parser.add_argument("--repo", required=True, help="Target OWNER/REPO")
-    parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+    parser.add_argument("--provider", choices=("openai", "anthropic"), default="openai")
+    parser.add_argument("--model", help="Override the selected provider's default model")
     parser.add_argument(
         "--allow-action", action="append", choices=sorted(MUTATIONS), default=[],
         help="Explicitly authorize this mutation without prompting (repeatable)",
@@ -298,10 +430,22 @@ def main(argv=None):
     try:
         github_token = os.environ.get("GITHUB_TOKEN")
         api_key = os.environ.get("OPENAI_API_KEY")
-        if not github_token or not api_key:
+        if args.provider == "openai" and (not github_token or not api_key):
             raise WorkerError("Set GITHUB_TOKEN and OPENAI_API_KEY in the environment.")
+        if not github_token:
+            raise WorkerError("Set GITHUB_TOKEN in the environment.")
         github = GitHubActions(args.repo, github_token, args.allow_action)
-        print(run_agent(args.task, github, api_key, args.model))
+        if args.provider == "anthropic":
+            model = args.model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+            provider = AnthropicProvider()
+            try:
+                answer = run_agent(args.task, github, None, model, completion=provider)
+            finally:
+                provider.close()
+        else:
+            model = args.model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+            answer = run_agent(args.task, github, api_key, model)
+        print(answer)
         return 0
     except WorkerError as exc:
         print(f"Error: {exc}", file=sys.stderr)
