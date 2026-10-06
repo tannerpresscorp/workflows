@@ -56,30 +56,52 @@ class GitHubActionsTests(unittest.TestCase):
         self.assertEqual(result["conclusion"], "failure")
         self.assertTrue(api.call_args.args[0].endswith("/actions/runs/12"))
 
-    @patch("worker.api_request", return_value={})
+    @patch("worker.api_request", side_effect=[{"id": 12}, {}])
     def test_confirmed_dispatch(self, api):
         result = self.github.execute(
             "dispatch_workflow", {"workflow_id": "ci.yml", "ref": "main", "inputs": {"build": "true"}},
         )
         self.assertEqual(result["status"], "submitted")
-        api.assert_called_once_with(
-            "https://api.github.com/repos/owner/repo/actions/workflows/ci.yml/dispatches",
+        self.assertEqual(api.call_count, 2)
+        api.assert_called_with(
+            "https://api.github.com/repos/owner/repo/actions/workflows/12/dispatches",
             "test-token", "POST", {"ref": "main", "inputs": {"build": "true"}},
         )
 
-    @patch("worker.api_request", return_value={})
+    @patch("worker.api_request", side_effect=[{"id": 12}, {}])
     def test_dotted_workflow_filename(self, api):
         self.github.execute("dispatch_workflow", {"workflow_id": "build.release.yml", "ref": "main"})
-        self.assertIn("/workflows/build.release.yml/dispatches", api.call_args.args[0])
+        self.assertTrue(api.call_args_list[0].args[0].endswith("/workflows/build.release.yml"))
+        self.assertTrue(api.call_args.args[0].endswith("/workflows/12/dispatches"))
 
-    @patch("worker.api_request", return_value={})
+    @patch("worker.api_request", side_effect=[{"id": 12}, {}, {"id": 12}])
     def test_omitted_and_empty_inputs_are_same_mutation(self, api):
         self.github.execute("dispatch_workflow", {"workflow_id": "ci.yml", "ref": "main"})
         with self.assertRaisesRegex(worker.WorkerError, "Duplicate mutation"):
             self.github.execute(
                 "dispatch_workflow", {"workflow_id": "ci.yml", "ref": "main", "inputs": {}},
             )
-        api.assert_called_once()
+        self.assertEqual(sum(len(entry.args) == 4 for entry in api.call_args_list), 1)
+
+    @patch("worker.api_request")
+    def test_workflow_alias_cannot_repeat_uncertain_dispatch(self, api):
+        api.side_effect = [
+            {"id": 12}, worker.WorkerError("Connection failed"), {"id": 12},
+        ]
+        self.github.allow_actions = {"dispatch_workflow"}
+        with self.assertRaisesRegex(worker.WorkerError, "Connection failed"):
+            self.github.execute("dispatch_workflow", {"workflow_id": "ci.yml", "ref": "main"})
+        with self.assertRaisesRegex(worker.WorkerError, "Duplicate mutation"):
+            self.github.execute("dispatch_workflow", {"workflow_id": "12", "ref": "main"})
+        self.assertEqual(sum(len(entry.args) == 4 for entry in api.call_args_list), 1)
+
+    @patch("worker.api_request")
+    def test_dispatch_requires_valid_canonical_workflow_id(self, api):
+        for details in ({}, {"id": True}, {"id": -1}, []):
+            api.return_value = details
+            with self.subTest(details=details), self.assertRaises(worker.WorkerError):
+                self.github.execute("dispatch_workflow", {"workflow_id": "ci.yml", "ref": "main"})
+        self.assertTrue(all(len(entry.args) == 2 for entry in api.call_args_list))
 
     @patch("worker.api_request", return_value={})
     def test_run_mutations(self, api):

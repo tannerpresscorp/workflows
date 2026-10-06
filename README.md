@@ -53,8 +53,10 @@ tokens. Workflow dispatch can execute repository code, deployments, and workflow
 with access to secrets; review the workflow and ref before approving.
 
 The AI cannot select another repository or execute arbitrary shell commands.
-Identical mutation attempts are blocked within an invocation, and API calls are
-not automatically retried. After a timeout or interruption, check GitHub before
+Dispatch targets are resolved to their numeric workflow ID so filename/ID aliases
+cannot bypass duplicate protection. Identical mutation attempts are blocked
+within an invocation, and API calls are not automatically retried.
+After a timeout or interruption, check GitHub before
 retrying: the operation may already have succeeded. The agent is bounded to ten
 AI turns and eight tool calls per turn. A submitted operation does not imply
 successful workflow completion.

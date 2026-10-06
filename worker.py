@@ -180,7 +180,17 @@ class GitHubActions:
             path = f"/actions{prefix}/runs?per_page=20"
         elif name == "dispatch_workflow":
             workflow = parse.quote(args["workflow_id"], safe="")
-            path = f"/actions/workflows/{workflow}/dispatches"
+            details = api_request(
+                f"https://api.github.com/repos/{self.repo}/actions/workflows/{workflow}",
+                self.token,
+            )
+            if (
+                not isinstance(details, dict)
+                or type(details.get("id")) is not int
+                or details["id"] <= 0
+            ):
+                raise WorkerError("GitHub returned an invalid workflow ID.")
+            path = f"/actions/workflows/{details['id']}/dispatches"
             method = "POST"
             body = {"ref": args["ref"], "inputs": args.get("inputs", {})}
         else:
