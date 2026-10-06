@@ -1,18 +1,42 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# Dependencies
+node_modules/
+/venv/
+env/
+.env
+.env.local
+.env.*.local
 
-# Other files and folders
-.settings/
+# Build outputs
+/dist/
+/build/
+*.o
+*.pyc
+__pycache__/
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# Test coverage
+/coverage/
+.nyc_output/
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Package managers
+package-lock.json
+yarn.lock
+
+# Temporary files
+*.tmp
+.tmp/

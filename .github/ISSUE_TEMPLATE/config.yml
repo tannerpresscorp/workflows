@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions
+    url: https://github.com/tannerpresscorp/worker/discussions
+    about: Ask questions and discuss ideas
+  - name: Documentation
+    url: https://github.com/tannerpresscorp/worker/blob/main/README.md
+    about: Read the documentation
