@@ -1,4 +1,4 @@
-# worker
+# Workflows
 
 A robust, scalable worker service for processing background jobs and asynchronous tasks with reliability, error handling, and retry mechanisms.
 
