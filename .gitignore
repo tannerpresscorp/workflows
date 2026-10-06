@@ -1,4 +1,7 @@
 # Build and Release Folders
+__pycache__/
+.venv/
+.env
 bin-debug/
 bin-release/
 [Oo]bj/
