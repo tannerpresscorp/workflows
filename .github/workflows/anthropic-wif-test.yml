@@ -11,7 +11,7 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const token = await core.getIDToken('http://api.anthropic.com');
+            const token = await core.getIDToken('https://api.anthropic.com');
             core.setSecret(token);
             core.exportVariable('JWT', token);
       - name: Exchange for an Anthropic access token
@@ -22,7 +22,7 @@ jobs:
           {
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": "$JWT",
-            "federation_rule_id": "fdrl_01Up5HFEYyZkdMfRfkJjb3hY",
+            "federation_rule_id": "fdrl_015rLkEckz2GWamBwjfevqeE",
             "organization_id": "9e12e8f1-2011-4b25-8396-d28225b636ae",
             "service_account_id": "svac_01AVwWtu9VR43jNCBLWiRLVm",
             "workspace_id": "wrkspc_01JAYYx1FrDdQ9Y7kVsgh9eU"
