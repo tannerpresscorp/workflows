@@ -73,6 +73,40 @@ Both providers use the same tool validation, repository scope, confirmation
 gates, duplicate mutation protection, and turn limits. OpenAI remains the
 default; the Anthropic SDK is only imported when `--provider anthropic` is used.
 
+### Test federation from GitHub Actions
+
+The manual workflow in `.github/workflows/anthropic-wif-test.yml` requests a
+GitHub OIDC token with job-scoped `id-token: write`, writes it to a protected
+temporary file, then runs `anthropic_connection_test.py`. The command uses the
+same `WorkloadIdentityCredentials` configuration as the worker to exchange the
+token and send the fixed greeting `Hello, Claude` to `claude-sonnet-4-6`. It does
+not run GitHub tools, change the federation rule, or require an OpenAI/API key.
+The Messages request incurs normal Anthropic usage charges.
+
+Once the workflow is on the default branch, open **Actions → Anthropic workload
+identity connection test → Run workflow**. Select a ref allowed by your federation
+rule. The audience defaults to `https://api.anthropic.com`; override it only to
+match your rule's exact audience. The issuer, repository, ref/subject, and other
+configured claim conditions must also match the GitHub token.
+
+The workflow defaults to the identity IDs supplied for this connection test.
+Override them through repository Actions variables named
+`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
+`ANTHROPIC_SERVICE_ACCOUNT_ID`, and `ANTHROPIC_WORKSPACE_ID` if needed.
+Watch the rule's authentication stream while the workflow runs. The job fails
+on token-exchange or model-request errors instead of treating an HTTP error body
+as success. It prints the greeting only after a complete Messages response,
+never prints either token, and removes the identity file even on failure.
+An authentication-stream success alone does not prove model access; inspect the
+workflow result as well.
+
+To run the same check from another trusted workload, configure the federation
+environment variables above, install the optional SDK, and run:
+
+```sh
+python anthropic_connection_test.py
+```
+
 ## Supported operations and safety
 
 - List up to 100 workflows and the 20 latest runs, optionally by workflow.
