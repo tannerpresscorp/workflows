@@ -13,14 +13,6 @@ jobs:
   call-claude:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install Anthropic SDK
-        run: python -m pip install --upgrade anthropic
-
       - name: Fetch GitHub OIDC token
         uses: actions/github-script@v8
         with:
@@ -29,34 +21,31 @@ jobs:
             core.setSecret(token);
             core.exportVariable('JWT', token);
 
-      - name: Call Claude using workload identity
+      - name: Exchange for an Anthropic access token
         env:
           ANTHROPIC_FEDERATION_RULE_ID: fdrl_01Up5HFEYyZkdMfRfkJjb3hY
           ANTHROPIC_ORGANIZATION_ID: 9e12e8f1-2011-4b25-8396-d28225b636ae
           ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01AVwWtu9VR43jNCBLWiRLVm
           ANTHROPIC_WORKSPACE_ID: wrkspc_01JAYYx1FrDdQ9Y7kVsgh9eU
         run: |
-          python - <<'PY'
-          import os
-          import anthropic
-          from anthropic import WorkloadIdentityCredentials
-
-          client = anthropic.Anthropic(
-              credentials=WorkloadIdentityCredentials(
-                  identity_token_provider=lambda: os.environ["JWT"],
-                  federation_rule_id=os.environ["ANTHROPIC_FEDERATION_RULE_ID"],
-                  organization_id=os.environ["ANTHROPIC_ORGANIZATION_ID"],
-                  service_account_id=os.environ["ANTHROPIC_SERVICE_ACCOUNT_ID"],
-                  workspace_id=os.environ["ANTHROPIC_WORKSPACE_ID"],
-              ),
-          )
-
-          message = client.messages.create(
-              model="claude-sonnet-4-6",
-              max_tokens=1024,
-              messages=[{"role": "user", "content": "Hello, Claude"}],
-          )
-          for block in message.content:
-              if block.type == "text":
-                  print(block.text)
-          PY
+          set -euo pipefail
+          response="$(
+            jq -n '{
+              grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              assertion: env.JWT,
+              federation_rule_id: env.ANTHROPIC_FEDERATION_RULE_ID,
+              organization_id: env.ANTHROPIC_ORGANIZATION_ID,
+              service_account_id: env.ANTHROPIC_SERVICE_ACCOUNT_ID,
+              workspace_id: env.ANTHROPIC_WORKSPACE_ID
+            }' |
+              curl --fail --silent --show-error https://api.anthropic.com/v1/oauth/token \
+                -H "content-type: application/json" \
+                --data @-
+          )"
+          printf '%s' "$response" | jq -e '
+            if (.access_token | type == "string" and length > 0) then
+              {token_type, expires_in}
+            else
+              error("Token exchange did not return an access token")
+            end
+          '
