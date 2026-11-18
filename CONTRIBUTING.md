@@ -1,6 +1,6 @@
-# Contributing to worker
+# Contributing to Workflows
 
-Thank you for your interest in contributing! This document provides guidelines and instructions for contributing to the worker project.
+Thank you for your interest in contributing! This document provides guidelines and instructions for contributing to the Workflows project.
 
 ## Code of Conduct
 
@@ -19,11 +19,11 @@ Be respectful, inclusive, and professional in all interactions. We're committed 
 ```bash
 # 1. Fork the repository on GitHub
 # 2. Clone your fork
-git clone https://github.com/YOUR_USERNAME/worker.git
-cd worker
+git clone https://github.com/YOUR_USERNAME/workflows.git
+cd workflows
 
 # 3. Add upstream remote
-git remote add upstream https://github.com/tannerpresscorp/worker.git
+git remote add upstream https://github.com/tannerpresscorp/workflows.git
 
 # 4. Install dependencies
 npm install
